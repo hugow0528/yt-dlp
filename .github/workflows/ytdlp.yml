@@ -1,1 +1,97 @@
+name: yt-dlp Video Downloader
 
+on:
+  workflow_dispatch:
+    inputs:
+      video_url:
+        description: '🔗 影片網址 (Video URL)'
+        required: true
+        type: string
+      quality:
+        description: '📺 畫質與格式設定 (Quality Preset)'
+        required: true
+        default: 'Best MP4 (Highest Quality / 4K / 1080p)'
+        type: choice
+        options:
+          - 'Best MP4 (Highest Quality / 4K / 1080p)'
+          - '1080p Max MP4'
+          - '720p Max MP4'
+          - 'Audio Only MP3 (320kbps)'
+          - 'Audio Only M4A'
+      download_subs:
+        description: '📝 下載並內嵌字幕 (Subtitles)'
+        required: false
+        default: true
+        type: boolean
+      embed_thumbnail:
+        description: '🖼️ 內嵌高畫質封面圖 (Thumbnail)'
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  download:
+    name: Download & Package Video
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: ⚙️ 安裝環境與套件 (Install ffmpeg, aria2 & yt-dlp)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg aria2
+          pip install --upgrade --no-cache-dir yt-dlp mutagen
+          mkdir -p downloads
+
+      - name: 🚀 執行 yt-dlp 下載 (Execute Download)
+        run: |
+          URL="${{ github.event.inputs.video_url }}"
+          QUALITY="${{ github.event.inputs.quality }}"
+          SUBS="${{ github.event.inputs.download_subs }}"
+          THUMB="${{ github.event.inputs.embed_thumbnail }}"
+
+          echo "Target URL: $URL"
+          echo "Selected Quality: $QUALITY"
+
+          # 基礎參數：啟用 aria2 多線程加速、避免重複
+          CMD_ARGS=(
+            "--no-mtime"
+            "--downloader" "aria2c"
+            "--downloader-args" "aria2c:-c -j 16 -x 16 -s 16 -k 1M"
+            "-o" "downloads/%(title)s [%(id)s].%(ext)s"
+          )
+
+          # 畫質設定
+          if [ "$QUALITY" = "Best MP4 (Highest Quality / 4K / 1080p)" ]; then
+            CMD_ARGS+=("-f" "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4] / bv*+ba/b" "--merge-output-format" "mp4")
+          elif [ "$QUALITY" = "1080p Max MP4" ]; then
+            CMD_ARGS+=("-f" "bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[height<=1080][ext=mp4] / bv*[height<=1080]+ba/b" "--merge-output-format" "mp4")
+          elif [ "$QUALITY" = "720p Max MP4" ]; then
+            CMD_ARGS+=("-f" "bv*[height<=720][ext=mp4]+ba[ext=m4a]/b[height<=720][ext=mp4] / bv*[height<=720]+ba/b" "--merge-output-format" "mp4")
+          elif [ "$QUALITY" = "Audio Only MP3 (320kbps)" ]; then
+            CMD_ARGS+=("-x" "--audio-format" "mp3" "--audio-quality" "320K")
+          elif [ "$QUALITY" = "Audio Only M4A" ]; then
+            CMD_ARGS+=("-x" "--audio-format" "m4a")
+          fi
+
+          # 字幕設定
+          if [ "$SUBS" = "true" ] && [[ "$QUALITY" != *"Audio Only"* ]]; then
+            CMD_ARGS+=("--write-subs" "--write-auto-subs" "--sub-langs" "zh.*,en.*,ja.*" "--embed-subs")
+          fi
+
+          # 封面與中繼資料
+          if [ "$THUMB" = "true" ]; then
+            CMD_ARGS+=("--embed-thumbnail" "--embed-metadata")
+          fi
+
+          # 執行下載
+          yt-dlp "${CMD_ARGS[@]}" "$URL"
+
+          echo "下載完成，目前檔案："
+          ls -lh downloads/
+
+      - name: 📦 上傳檔案為 GitHub Artifact (Upload Artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: downloaded-media
+          path: downloads/*
+          retention-days: 1
