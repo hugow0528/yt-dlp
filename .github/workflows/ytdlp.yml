@@ -35,14 +35,16 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: ⚙️ 安裝環境與套件 (Install ffmpeg, aria2 & yt-dlp)
+      - name: ⚙️ 安裝環境與套件 (Install nodejs, ffmpeg, aria2 & yt-dlp)
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq ffmpeg aria2
+          sudo apt-get install -y -qq ffmpeg aria2 nodejs
           pip install --upgrade --no-cache-dir yt-dlp mutagen
           mkdir -p downloads
 
-      - name: 🚀 執行 yt-dlp 下載 (Execute Download)
+      - name: 🚀 執行 yt-dlp 下載 (Execute Download with Anti-Bot Bypass)
+        env:
+          YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
         run: |
           URL="${{ github.event.inputs.video_url }}"
           QUALITY="${{ github.event.inputs.quality }}"
@@ -52,13 +54,25 @@ jobs:
           echo "Target URL: $URL"
           echo "Selected Quality: $QUALITY"
 
-          # 基礎參數：啟用 aria2 多線程加速、避免重複
+          # 基礎參數配置：
+          # 1. 繞過機房 IP 機器人驗證 (Sign in to confirm you're not a bot) -> 使用 android,ios,web 客戶端
+          # 2. 啟用 node 作為 JS 執行環境以正確解密 n-sig
+          # 3. 啟用 aria2 多線程加速
           CMD_ARGS=(
             "--no-mtime"
+            "--js-runtimes" "node:node"
+            "--extractor-args" "youtube:player_client=android,ios,web"
             "--downloader" "aria2c"
             "--downloader-args" "aria2c:-c -j 16 -x 16 -s 16 -k 1M"
             "-o" "downloads/%(title)s [%(id)s].%(ext)s"
           )
+
+          # 若使用者有在 GitHub Secrets 設定 YOUTUBE_COOKIES，自動載入
+          if [ -n "$YOUTUBE_COOKIES" ]; then
+            echo "$YOUTUBE_COOKIES" > cookies.txt
+            CMD_ARGS+=("--cookies" "cookies.txt")
+            echo "已載入 GitHub Secret Cookies 進行身分驗證。"
+          fi
 
           # 畫質設定
           if [ "$QUALITY" = "Best MP4 (Highest Quality / 4K / 1080p)" ]; then
